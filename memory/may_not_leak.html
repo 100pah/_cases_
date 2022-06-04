@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+    <head>
+
+        <meta charset="utf-8">
+
+    </head>
+    <body>
+
+        <button onclick="_controller.start(600)">start with interval 500ms (memory OK)</button><br/>
+        <button onclick="_controller.start(100)">start with interval 100ms (memory keep increacing)</button><br/>
+        <button onclick="_controller.stop()">stop</button><br/>
+
+        <div id="info-container">
+        </div>
+
+        <script>
+
+            ///
+            /// The logic of start, stop of the buttons.
+            ///
+            var _controller = (function () {
+
+                var timer = null;
+                var inputBase = 0;
+                var info = {
+                    'startedTaskCount': 0,
+                    'finishedTaskCount': 0,
+                    'startedTaskCount - finishedTaskCount': 0,
+                    'html_jsHeapSizeLimit': 0,
+                    'html_totalJSHeapSize': 0,
+                    'html_usedJSHeapSize': 0,
+                };
+
+                function updateInfo(newInfo) {
+                    Object.assign(info, newInfo);
+                    info['startedTaskCount - finishedTaskCount'] = info.startedTaskCount - info.finishedTaskCount;
+                    if (typeof performance !== 'undefined' && performance.memory) {
+                        info.html_jsHeapSizeLimit = addCommas(performance.memory.jsHeapSizeLimit) + ' byte';
+                        info.html_totalJSHeapSize = addCommas(performance.memory.totalJSHeapSize) + ' byte';
+                        info.html_usedJSHeapSize = addCommas(performance.memory.usedJSHeapSize) + ' byte';
+                    }
+                }
+
+                function start(interval) {
+                    stop();
+
+                    function singlePerform() {
+                        timer = setTimeout(function () {
+                            if (timer != null) {
+                                _app.doSomething(inputBase++, onAppTaskFinished);
+                                updateInfo({
+                                    startedTaskCount: info.startedTaskCount + 1
+                                });
+                                _infoView.render(info);
+                                singlePerform();
+                            }
+                        }, interval);
+                    }
+
+                    function onAppTaskFinished(remoteResult) {
+                        updateInfo({
+                            finishedTaskCount: info.finishedTaskCount + 1
+                        });
+                        _infoView.render(info);
+                    }
+
+                    singlePerform();
+                }
+
+                function stop() {
+                    if (timer != null) {
+                        clearTimeout(timer);
+                        timer = null;
+                    }
+                }
+
+                function addCommas(x) {
+                    const parts = (x + '').split('.');
+                    return parts[0].replace(/(\d{1,3})(?=(?:\d{3})+(?!\d))/g, '$1,')
+                            + (parts.length > 1 ? ('.' + parts[1]) : '');
+                }
+
+                return {start: start, stop: stop};
+            })();
+
+            ///
+            /// Represents the business logic.
+            ///
+            var _app = (function () {
+
+                function PayloadMakeMemoryIncreaseFast() {
+                    this.payload = new Float64Array(1e5);
+                }
+
+                function doSomething(input, onFinished) {
+                    var payloadMakeMemoryIncreaseFast = new PayloadMakeMemoryIncreaseFast();
+                    // var arr = window.arr || (window.arr = []);
+                    // arr.push(payloadMakeMemoryIncreaseFast);
+                    _remoteStub.doSomethingRemotely(input, function (remoteResult) {
+                        payloadMakeMemoryIncreaseFast.payload[0] = 1;
+                        onFinished(remoteResult);
+                    });
+                }
+
+                return {doSomething: doSomething};
+            })();
+
+            ///
+            /// A real remote can be a worker, a server, etc.
+            /// This is a fake remote, which simulate performing
+            /// tasks one by one in a single thread (no concurrency).
+            /// Each task cost about 500 ms.
+            ///
+            var _remoteStub = (function () {
+
+                var workerCode = [
+                    "   self.onmessage = function (event) {                                 ",
+                    "       var startTime = +(new Date());                                  ",
+                    "       while (true) {                                                  ",
+                    "           var spent = +(new Date()) - startTime;                      ",
+                    "           if (spent >= 500) {                                         ",
+                    "               break;                                                  ",
+                    "           }                                                           ",
+                    "       }                                                               ",
+                    "       var message = {input: event.data, result: Math.random()};       ",
+                    "       postMessage(message);                                           ",
+                    "   };                                                                  "
+                ].join('\n');
+
+                var blob;
+                try {
+                    blob = new Blob([workerCode], {type: 'application/javascript'});
+                }
+                catch (err) { // Backwards-compatibility
+                    window.BlobBuilder = window.BlobBuilder || window.WebKitBlobBuilder || window.MozBlobBuilder;
+                    blob = new BlobBuilder();
+                    blob.append(workerCode);
+                    blob = blob.getBlob();
+                }
+                var URL = window.URL || window.webkitURL;
+                var worker = new Worker(URL.createObjectURL(blob));
+
+                var onFinishedCallbackQueue = [];
+
+                worker.onmessage = function(e) {
+                    var onFinished = onFinishedCallbackQueue.shift();
+                    onFinished(e.data);
+                };
+
+                function doSomethingRemotely(input, onFinished) {
+                    onFinishedCallbackQueue.push(onFinished);
+                    worker.postMessage(input);
+                }
+
+                return {doSomethingRemotely: doSomethingRemotely};
+            })();
+
+            ///
+            /// Print the info to HTML.
+            ///
+            var _infoView = (function () {
+
+                var elMap = {};
+
+                function addItem(elKey) {
+                    var infoContainer = document.getElementById('info-container');
+                    var lineEl = document.createElement('div');
+                    infoContainer.appendChild(lineEl);
+                    lineEl.innerText = elKey + ': ';
+                    var contentEl = document.createElement('span');
+                    lineEl.appendChild(contentEl);
+                    elMap[elKey] = contentEl;
+                }
+
+                function render(info) {
+                    var infoKeyList = Object.keys(info);
+                    for (var i = 0; i < infoKeyList.length; i++) {
+                        var infoKey = infoKeyList[i];
+                        var infoValue = info[infoKey];
+                        if (!elMap.hasOwnProperty(infoKey)) {
+                            addItem(infoKey);
+                        }
+                    }
+                    var elKeyList = Object.keys(elMap);
+                    for (var i = 0; i < elKeyList.length; i++) {
+                        var elKey = elKeyList[i];
+                        elMap[elKey].innerText = info[elKey];
+                    }
+                }
+                return {render: render}
+            })();
+
+
+        </script>
+
+    </body>
+</html>
