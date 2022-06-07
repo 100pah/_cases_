@@ -89,14 +89,20 @@
             ///
             var _app = (function () {
 
+                /// In real business logic, there are probably various objects
+                /// keeping referenced and can not be garbage collected immediately.
+                /// But in this demo we only use this payload to demonstrate that.
                 function PayloadMakeMemoryIncreaseFast() {
-                    this.payload = new Float64Array(1e5);
+                    var len = 1e5;
+                    this.payload = new Float64Array(len);
+                    // this.payload = new Array(len);
+                    // for (var i = 0; i < len; i++) {
+                    //     this.payload[i] = 1.5;
+                    // }
                 }
 
                 function doSomething(input, onFinished) {
                     var payloadMakeMemoryIncreaseFast = new PayloadMakeMemoryIncreaseFast();
-                    // var arr = window.arr || (window.arr = []);
-                    // arr.push(payloadMakeMemoryIncreaseFast);
                     _remoteStub.doSomethingRemotely(input, function (remoteResult) {
                         payloadMakeMemoryIncreaseFast.payload[0] = 1;
                         onFinished(remoteResult);
